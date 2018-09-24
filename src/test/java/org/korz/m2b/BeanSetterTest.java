@@ -56,4 +56,29 @@ public class BeanSetterTest {
         setter.setProperties(bean, properties);
         assertThat(bean.getName(), is("fred"));
     }
+
+    class NumberBean {
+        private int count;
+
+        public int getCount() {
+            return count;
+        }
+
+        @SuppressWarnings("unused") // reflection
+        public void setCount(int count) {
+            this.count = count;
+        }
+    }
+
+    @Test
+    public void typeConvert() {
+        NumberBean bean = new NumberBean();
+        BeanSetter setter = BeanSetter.newBuilder()
+            .addTypeConverter(String.class, int.class, Integer::valueOf)
+            .build();
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("count", "42");
+        setter.setProperties(bean, properties);
+        assertThat(bean.getCount(), is(42));
+    }
 }

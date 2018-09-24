@@ -8,11 +8,13 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 public class BeanSetter {
     private static final Logger LOG = LoggerFactory.getLogger(BeanSetter.class);
 
     private final boolean errorOnUnused;
+    private final Map<TypeConverterKey, Function<?, ?>> typeConverters;
 
     public BeanSetter() {
         this(new Builder());
@@ -24,12 +26,43 @@ public class BeanSetter {
 
     public static class Builder {
         private boolean errorOnUnused = true;
+        private final Map<TypeConverterKey, Function<?, ?>> typeConverters = new HashMap<>();
 
         private Builder() {
         }
 
         public Builder setErrorOnUnused(boolean errorOnUnused) {
             this.errorOnUnused = errorOnUnused;
+            return this;
+        }
+
+        public <In, Out> Builder addTypeConverter(Class<In> in, Class<Out> out, Function<In, Out> converter) {
+            if (in == null) {
+                throw new NullPointerException("in is null");
+            }
+            if (out == null) {
+                throw new NullPointerException("out is null");
+            }
+            if (converter == null) {
+                throw new NullPointerException("converter is null");
+            }
+            typeConverters.put(new TypeConverterKey(in, out), converter);
+            return this;
+        }
+
+        public Builder removeTypeConverter(Class<?> in, Class<?> out) {
+            if (in == null) {
+                throw new NullPointerException("in is null");
+            }
+            if (out == null) {
+                throw new NullPointerException("out is null");
+            }
+            typeConverters.remove(new TypeConverterKey(in, out));
+            return this;
+        }
+
+        public Builder removeAllTypeConverters() {
+            typeConverters.clear();
             return this;
         }
 
@@ -40,6 +73,7 @@ public class BeanSetter {
 
     private BeanSetter(Builder b) {
         errorOnUnused = b.errorOnUnused;
+        typeConverters = b.typeConverters;
     }
 
     public void setProperties(Object bean, Map<String, ?> properties) {
@@ -78,19 +112,18 @@ public class BeanSetter {
                 Class<?> parameterType = setter.getParameterTypes()[0];
                 // Search for static valueOf method
                 try {
-                    Object convertedValue;
-                    if (propertyType == String.class && parameterType == Class.class) {
-                        // Special case for String -> Class
-                        convertedValue = Class.forName((String) propertyValue);
-                    } else {
-                        Method valueOf = parameterType.getMethod("valueOf", propertyType);
-                        convertedValue = valueOf.invoke(null, propertyValue);
+                    Function typeConverter = typeConverters.get(new TypeConverterKey(propertyType, parameterType));
+                    if (typeConverter == null) {
+                        throw new IllegalArgumentException(
+                            "Failed to set property \"" + propertyName + "\"" +
+                                ", cannot convert " + propertyType.getName() + " to " + parameterType.getName());
                     }
+                    Object convertedValue = typeConverter.apply(propertyValue);
                     setter.invoke(bean, convertedValue);
-                } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | ClassNotFoundException e1) {
+                } catch (IllegalAccessException | InvocationTargetException e1) {
                     throw new IllegalArgumentException(
                         "Failed to set property \"" + propertyName + "\"" +
-                            ", cannot convert " + propertyType.getName() + " to " + parameterType.getName(), e1);
+                            ", failed to convert " + propertyType.getName() + " to " + parameterType.getName(), e1);
                 }
             }
         }
