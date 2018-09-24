@@ -1,0 +1,97 @@
+plugins {
+    id 'java'
+    id 'jacoco'
+    id 'maven-publish'
+    id 'com.jfrog.bintray' version '1.8.0'
+}
+
+group = 'org.korz.m2b'
+version = '1.0.0'
+
+repositories {
+    jcenter()
+}
+
+configurations {
+    // Explicitly declare all dependencies
+    compileClasspath.transitive = false
+}
+
+dependencies {
+    implementation 'org.slf4j:slf4j-api:1.7.25'
+
+    testImplementation 'junit:junit:4.12'
+    testImplementation 'org.hamcrest:hamcrest-library:1.3'
+
+    //testRuntime 'org.apache.logging.log4j:log4j-slf4j-impl:2.11.1'
+    testRuntime 'ch.qos.logback:logback-classic:1.2.3'
+}
+
+tasks.withType(JavaCompile) {
+    options.with {
+        deprecation = true
+        compilerArgs << '-Xlint:unchecked'
+    }
+}
+
+test {
+    testLogging {
+        showStandardStreams true
+        exceptionFormat 'full'
+    }
+}
+
+jacoco {
+    toolVersion = '0.7.9'
+}
+
+javadoc {
+    options {
+        links 'https://docs.oracle.com/javase/8/docs/api/'
+    }
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier 'sources'
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier 'javadoc'
+    from javadoc.destinationDir
+}
+
+artifacts {
+    archives sourcesJar
+    archives javadocJar
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            artifact sourcesJar {
+                classifier 'sources'
+            }
+            artifact javadocJar {
+                classifier 'javadoc'
+            }
+        }
+    }
+}
+
+bintray {
+    user = System.env.BINTRAY_USER
+    key = System.env.BINTRAY_API_KEY
+    publications = ['maven']
+    pkg {
+        userOrg = 'okorz001'
+        repo = 'maven'
+        name = rootProject.name
+    }
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '4.10'
+    distributionType = 'all'
+}
