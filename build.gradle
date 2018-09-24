@@ -5,7 +5,7 @@ plugins {
     id 'com.jfrog.bintray' version '1.8.0'
 }
 
-group = 'org.korz.m2b'
+group = 'org.korz.beanmagic'
 version = '1.0.0'
 
 repositories {

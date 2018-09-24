@@ -1,4 +1,4 @@
-package org.korz.m2b;
+package org.korz.beanmagic;
 
 import org.junit.Test;
 
