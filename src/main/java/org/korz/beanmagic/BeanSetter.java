@@ -28,7 +28,7 @@ public class BeanSetter {
     private final Map<TypeConverterKey, Function<?, ?>> typeConverters;
 
     public BeanSetter() {
-        this(new Builder().addDefaultTypeConverters());
+        this(newBuilder().addDefaultTypeConverters());
     }
 
     public static Builder newBuilder() {
