@@ -3,20 +3,10 @@ package org.korz.beanmagic;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.OffsetDateTime;
-import java.time.OffsetTime;
-import java.time.Period;
-import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
@@ -28,7 +18,7 @@ public class BeanSetter {
     private final Map<TypeConverterKey, Function<?, ?>> typeConverters;
 
     public BeanSetter() {
-        this(newBuilder().addDefaultTypeConverters());
+        this(newBuilder());
     }
 
     public static Builder newBuilder() {
@@ -57,51 +47,7 @@ public class BeanSetter {
             if (converter == null) {
                 throw new NullPointerException("converter is null");
             }
-            typeConverters.put(new TypeConverterKey(in, out), converter);
-            return this;
-        }
-
-        public Builder addDefaultTypeConverters() {
-            // booleans
-            addTypeConverter(String.class, boolean.class, Boolean::valueOf);
-            addTypeConverter(String.class, Boolean.class, Boolean::valueOf);
-            // characters (not official)
-            addTypeConverter(String.class, char.class, s -> s.charAt(0));
-            addTypeConverter(String.class, Character.class, s -> s.charAt(0));
-            // integers
-            addTypeConverter(String.class, byte.class, Byte::valueOf);
-            addTypeConverter(String.class, Byte.class, Byte::valueOf);
-            addTypeConverter(String.class, short.class, Short::valueOf);
-            addTypeConverter(String.class, Short.class, Short::valueOf);
-            addTypeConverter(String.class, int.class, Integer::valueOf);
-            addTypeConverter(String.class, Integer.class, Integer::valueOf);
-            addTypeConverter(String.class, long.class, Long::valueOf);
-            addTypeConverter(String.class, Long.class, Long::valueOf);
-            addTypeConverter(String.class, BigInteger.class, BigInteger::new);
-            // decimals/floats
-            addTypeConverter(String.class, float.class, Float::valueOf);
-            addTypeConverter(String.class, Float.class, Float::valueOf);
-            addTypeConverter(String.class, double.class, Double::valueOf);
-            addTypeConverter(String.class, Double.class, Double::valueOf);
-            addTypeConverter(String.class, BigDecimal.class, BigDecimal::new);
-            // class
-            addTypeConverter(String.class, Class.class, s -> {
-                try {
-                    return Class.forName(s);
-                } catch (ClassNotFoundException e) {
-                    throw new IllegalArgumentException(e);
-                }
-            });
-            // time
-            addTypeConverter(String.class, Instant.class, Instant::parse);
-            addTypeConverter(String.class, LocalDate.class, LocalDate::parse);
-            addTypeConverter(String.class, LocalDateTime.class, LocalDateTime::parse);
-            addTypeConverter(String.class, LocalTime.class, LocalTime::parse);
-            addTypeConverter(String.class, OffsetDateTime.class, OffsetDateTime::parse);
-            addTypeConverter(String.class, ZonedDateTime.class, ZonedDateTime::parse);
-            addTypeConverter(String.class, OffsetTime.class, OffsetTime::parse);
-            addTypeConverter(String.class, Duration.class, Duration::parse);
-            addTypeConverter(String.class, Period.class, Period::parse);
+            typeConverters.put(new TypeConverterKey(toBoxedType(in), toBoxedType(out)), converter);
             return this;
         }
 
@@ -158,30 +104,129 @@ public class BeanSetter {
             Object propertyValue = property.getValue();
             try {
                 setter.invoke(bean, propertyValue);
+                continue;
             } catch (IllegalAccessException | InvocationTargetException e) {
                 throw new IllegalArgumentException(
                     "Failed to set property \"" + propertyName + "\", cannot invoke setter", e);
             } catch (IllegalArgumentException e) {
                 // Argument type mismatch, try to convert property value
-                Class<?> propertyType = propertyValue.getClass();
-                Class<?> parameterType = setter.getParameterTypes()[0];
-                // Search for static valueOf method
+            }
+
+            Class<?> parameterType = setter.getParameterTypes()[0];
+            Object convertedValue;
+            try {
+                convertedValue = convertValue(propertyValue, toBoxedType(parameterType));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                    "Failed to set property \"" + propertyName + "\"" +
+                        ", failed to convert " + propertyValue.getClass().getName() + " to " + parameterType.getName(), e);
+            }
+            try {
+                setter.invoke(bean, convertedValue);
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                // This should've happened already...
+                throw new IllegalArgumentException(
+                    "Failed to set property \"" + propertyName + "\", cannot invoke setter", e);
+            }
+        }
+    }
+
+    private Object convertValue(Object propertyValue, Class<?> parameterType) {
+        Class<?> propertyType = propertyValue.getClass();
+
+        // Type converter is highest priority since they are explicitly registered
+        Function<Object, Object> typeConverter = getTypeConverter(propertyType, parameterType);
+        if (typeConverter == null) {
+            LOG.debug("No type converter for {} to {}", propertyType, parameterType);
+        } else {
+            try {
+                return typeConverter.apply(propertyValue);
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException(
+                    "Failed invoking type converter from " + propertyType.getName() + " to " + parameterType.getName(), e);
+            }
+        }
+
+        // TODO: Search for static valueOf method
+        Method[] methods = parameterType.getMethods();
+
+        // valueOf is used by boxed types and enums
+        for (Method method : methods) {
+            if (Modifier.isStatic(method.getModifiers()) &&
+                method.getReturnType() == parameterType &&
+                method.getName().equals("valueOf") &&
+                method.getParameterTypes().length == 1) {
                 try {
-                    Function typeConverter = typeConverters.get(new TypeConverterKey(propertyType, parameterType));
-                    if (typeConverter == null) {
-                        throw new IllegalArgumentException(
-                            "Failed to set property \"" + propertyName + "\"" +
-                                ", cannot convert " + propertyType.getName() + " to " + parameterType.getName());
-                    }
-                    @SuppressWarnings("unchecked") // type parameters enforced in addTypeConverter
-                    Object convertedValue = typeConverter.apply(propertyValue);
-                    setter.invoke(bean, convertedValue);
-                } catch (IllegalAccessException | InvocationTargetException e1) {
-                    throw new IllegalArgumentException(
-                        "Failed to set property \"" + propertyName + "\"" +
-                            ", failed to convert " + propertyType.getName() + " to " + parameterType.getName(), e1);
+                    return method.invoke(null, propertyValue);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new IllegalArgumentException("Cannot invoke " + parameterType.getName() + ".valueOf", e);
+                } catch (IllegalArgumentException e) {
+                    // Argument type mismatch
+                    LOG.debug("{}.valueOf failed", method.toString(), e);
                 }
             }
+        }
+
+        // parse is used by java.time types
+        for (Method method : methods) {
+            if (Modifier.isStatic(method.getModifiers()) &&
+                method.getReturnType() == parameterType &&
+                method.getName().equals("parse") &&
+                method.getParameterTypes().length == 1) {
+                try {
+                    return method.invoke(null, propertyValue);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new IllegalArgumentException("Cannot invoke " + parameterType.getName() + ".parse", e);
+                } catch (IllegalArgumentException e) {
+                    // Argument type mismatch
+                    LOG.debug("{}.parse failed", parameterType.getName(), e);
+                }
+            }
+        }
+
+        // TODO: constructor is lowest priority since it always allocates a new instance
+        for (Constructor<?> ctor : parameterType.getConstructors()) {
+            if (ctor.getParameterTypes().length == 1) {
+                try {
+                    return ctor.newInstance(propertyValue);
+                } catch (IllegalAccessException | InstantiationException | InvocationTargetException e) {
+                    throw new IllegalArgumentException("Cannot construct " + parameterType.getName(), e);
+                } catch (IllegalArgumentException e) {
+                    // Argument type mismatch
+                    LOG.debug("{} constructor failed", parameterType.getName(), e);
+                }
+            }
+        }
+
+        throw new IllegalArgumentException("Cannot convert " + propertyType.getName()  + " to " + parameterType.getName());
+    }
+
+    @SuppressWarnings("unchecked")
+    private Function<Object, Object> getTypeConverter(Class<?> in, Class<?> out) {
+        return (Function) typeConverters.get(new TypeConverterKey(toBoxedType(in), toBoxedType(out)));
+    }
+
+    private static Class<?> toBoxedType(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return type;
+        } else if (type == boolean.class) {
+            return Boolean.class;
+        } else if (type == byte.class) {
+            return Byte.class;
+        } else if (type == short.class) {
+            return Short.class;
+        } else if (type == int.class) {
+            return Integer.class;
+        } else if (type == long.class) {
+            return Long.class;
+        } else if (type == char.class) {
+            return Character.class;
+        } else if (type == float.class) {
+            return Float.class;
+        } else if (type == double.class) {
+            return Double.class;
+        } else {
+            throw new IllegalArgumentException("Unknown primitive type?! " + type.getName());
         }
     }
 

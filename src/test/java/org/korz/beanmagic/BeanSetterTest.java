@@ -71,13 +71,24 @@ public class BeanSetterTest {
     }
 
     @Test
-    public void typeConvert() {
+    public void defaultTypeConvert() {
         NumberBean bean = new NumberBean();
         BeanSetter setter = BeanSetter.newBuilder()
-            .addTypeConverter(String.class, int.class, Integer::valueOf)
             .build();
         Map<String, Object> properties = new HashMap<>();
         properties.put("count", "42");
+        setter.setProperties(bean, properties);
+        assertThat(bean.getCount(), is(42));
+    }
+
+    @Test
+    public void explicitTypeConvert() {
+        NumberBean bean = new NumberBean();
+        BeanSetter setter = BeanSetter.newBuilder()
+            .addTypeConverter(String.class, int.class, str -> 42)
+            .build();
+        Map<String, Object> properties = new HashMap<>();
+        properties.put("count", "fish");
         setter.setProperties(bean, properties);
         assertThat(bean.getCount(), is(42));
     }
